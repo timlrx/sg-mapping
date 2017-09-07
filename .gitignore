@@ -2,4 +2,7 @@
 .Rhistory
 .RData
 .Ruserdata
-data/
+data/Census2000/
+data/Census2010/
+data/GHS2015/
+data/GIS/

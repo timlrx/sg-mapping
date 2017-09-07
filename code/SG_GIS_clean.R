@@ -1,13 +1,14 @@
 library(rgdal) #use readOGR to read in .shp files 
 library(rgeos)
-library(raster)
 library(maptools)
 library(rmapshaper)
 library(tmap)
 library(tmaptools)
 library(reshape2)
 library(dplyr)
+library(raster)
 library(viridis)
+library(reshape2)
 
 ## Map polygon (contains shape, islands) downloaded from: 
 ## https://geo.data.gov.sg/singaporemap-polygon/2017/06/22/shp/singaporemap-polygon.zip
@@ -51,7 +52,7 @@ temp2 <- sg_plan[(sg_plan$PLN_AREA_N %in% c("DOWNTOWN CORE","SINGAPORE RIVE",
                                             "MARINA SOUTH", "MARINA EAST","MARINE PARADE")),]
 
 ### Combine region mapping with actual Singapore map
-sg <- intersect(buffer(sg_plan, dissolve=FALSE), as(sg_shape_main, 'SpatialPolygons')) # Remove data from main
+sg <- raster::intersect(buffer(sg_plan, dissolve=FALSE), as(sg_shape_main, 'SpatialPolygons')) # Remove data from main
 sg <- unionSpatialPolygons(sg, IDs=as.factor(sg$PLN_AREA_N))
 ### Append the data back
 sg <- SpatialPolygonsDataFrame(sg, sg_plan@data, match.ID="PLN_AREA_N")
@@ -63,7 +64,7 @@ tm_shape(sg_shape_main) +
   tm_polygons(col="blue", alpha=0.5)
 
 ### Read in data to plot
-ghs2015_ethnic <- read.csv("data/GHS2015/resident_pop_ethnic_age/Level1.csv",
+ghs2015_ethnic <- read.csv("data/GHS2015/resident_pop_ethnic_sex/Level1.csv",
                            stringsAsFactors=FALSE)
 ghs2015_ethnic$Level_3 <- toupper(trimws(sub("- Total","",ghs2015_ethnic$Level_3)))
 ghs2015_ethnic$Level_2 <- trimws(ghs2015_ethnic$Level_2)
@@ -96,41 +97,77 @@ tm_shape(sg_ethnic_oth) +
 
 ### Read in religion data
 ghs2015_religion <- read.csv("data/GHS2015/resident_pop_religion/Level2.csv",
-                           stringsAsFactors=FALSE)
+                             stringsAsFactors=FALSE)
 ghs2015_religion$Level_3 <- toupper(trimws(ghs2015_religion$Level_3))
 ghs2015_religion$Level_2 <- trimws(ghs2015_religion$Level_2)
 ghs2015_religion$Level_1 <- trimws(ghs2015_religion$Level_1)
+ghs2015_religion$rel <- ghs2015_religion$Level_1
+ghs2015_religion$rel <- ifelse(ghs2015_religion$rel=="Christianity- Other Christians",
+                               "Christianity",ghs2015_religion$rel)
+ghs2015_religion$rel <- ifelse(ghs2015_religion$rel=="Christianity- Catholic",
+                               "Christianity",ghs2015_religion$rel)
 ghs2015_religion$Value <- as.numeric(ghs2015_religion$Value)
 ghs2015_religion_total <- ghs2015_religion %>%
   filter(Level_1=="Total") %>%
-  select(Level_3, Value) %>%
+  dplyr::select(Level_3, Value) %>%
   rename(Total = Value) 
 
 ghs2015_religion <- ghs2015_religion %>%
   filter(Level_1!="Total") %>%
+  group_by(Level_3, rel) %>%
+  mutate(num = sum(Value)) %>% 
+  ungroup() %>%
   left_join(ghs2015_religion_total, by="Level_3") %>%
   mutate(prop = Value/Total * 100)
 
 ### Religion data
-ghs2015_religion_is <- filter(ghs2015_religion, Level_1=="Islam") %>% arrange(prop)
-sg_religion_is <- append_data(sg, ghs2015_religion_is, key.shp="PLN_AREA_N",key.data="Level_3")
+ghs2015_religion_prop <- ghs2015_religion %>%
+                         filter(Level_1!="Christianity- Catholic") %>%
+                         dplyr::select(rel, Level_3, prop) %>%
+                         dcast(Level_3 ~ rel)
 
-ghs2015_religion_cat <- filter(ghs2015_religion, Level_1=="Christianity- Catholic" ) %>% arrange(prop)
-sg_religion_cat <- append_data(sg, ghs2015_religion_cat, key.shp="PLN_AREA_N",key.data="Level_3")
+sg_religion_map <- append_data(sg, ghs2015_religion_prop, key.shp="PLN_AREA_N",key.data="Level_3",
+                               ignore.duplicates = TRUE)
 
-ghs2015_religion_chr <- filter(ghs2015_religion, Level_1=="Christianity- Other Christians") %>% arrange(prop)
-sg_religion_chr <- append_data(sg, ghs2015_religion_chr, key.shp="PLN_AREA_N",key.data="Level_3")
+tm_shape(sg_religion_map) +
+  tm_polygons(c("Buddhism","Christianity","Islam","No Religion"),
+              breaks = c(0, 5, 10, 20, 30, 40, Inf), colorNA="light grey",
+              title="Proportion (%)") +
+  tm_facets(free.scales = FALSE) +
+  tm_layout(panel.labels=c("Buddhism","Christianity","Islam","No Religion"))
 
-ghs2015_religion_bud <- filter(ghs2015_religion, Level_1=="Buddhism") %>% arrange(prop)
-sg_religion_bud <- append_data(sg, ghs2015_religion_bud, key.shp="PLN_AREA_N",key.data="Level_3")
+### Plot relative to national average
+ghs2015_national_rel <- read.csv("data/GHS2015/resident_pop_religion/Level1.csv",
+                             stringsAsFactors=FALSE)
 
-ghs2015_religion_tao <- filter(ghs2015_religion, Level_1=="Taoism") %>% arrange(prop)
-sg_religion_tao <- append_data(sg, ghs2015_religion_tao, key.shp="PLN_AREA_N",key.data="Level_3")
+ghs2015_national_rel$Level_1 <- trimws(gsub("(- Catholic)|(- Other Christians)", "", ghs2015_national_rel$Level_1))
+                        
+ghs2015_national_rel <- ghs2015_national_rel %>%
+  group_by(Level_1) %>%
+  mutate(Value = sum(Value),
+         national_prop = Value / 3275.9 *100) %>%
+  ungroup() %>%
+  distinct() %>%
+  rename(rel = Level_1) %>%
+  dplyr::select(rel, national_prop) 
+                        
+ghs2015_religion_nat <- ghs2015_religion %>%
+  filter(Level_1!="Christianity- Catholic") %>%
+  dplyr::select(rel, Level_3, prop) %>%
+  left_join(ghs2015_national_rel, by="rel") %>%
+  mutate(diff = prop - national_prop, relative_diff = diff/national_prop *100) %>%
+  dplyr::select(Level_3, rel, relative_diff) %>%
+  dcast(Level_3 ~ rel)
 
+sg_religion_map2 <- append_data(sg, ghs2015_religion_nat, key.shp="PLN_AREA_N",key.data="Level_3")
 
-tm_shape(sg_religion_tao) +
-  tm_polygons("prop", palette=viridis(6), colorNA="light grey")
-
+tm_shape(sg_religion_map2) +
+  tm_polygons(c("Buddhism","Christianity","Islam","No Religion"),
+              breaks=c(-100,-50, -25, -10, 10, 25, 50, 100),
+              colorNA="light grey",
+              title="Proportion (%)") +
+  tm_facets(free.scales = FALSE) +
+  tm_layout(panel.labels=c("Buddhism","Christianity","Islam","No Religion"))
 
 #  tm_text("PLN_AREA_N", size="AREA", scale=0.7, root=8, size.lowerbound = .4,
 #        just=c("center","center"),

@@ -2,6 +2,10 @@ library(dplyr)
 
 df <- readRDS("data/SG_region_data.rds")
 
+### Remove subregions for year 2000
+df <- df[(df$Year==2000 & stringr::str_count(df$Level_3, " ")<10) |
+           df$Year!=2000,]
+
 df$Level_3 <- trimws(df$Level_3) 
 df$Level_3 <- gsub("- Total", "", df$Level_3)
 df$Level_1 <- gsub("-", " ", df$Level_1)
@@ -65,28 +69,29 @@ df$Level_1 <- gsub("([0-9]+) ([0-9]+)", "\\1 - \\2", df$Level_1)
 df$Level_1 <- ifelse(df$Level_1=="65 Over", "65 & Over", df$Level_1)
 df$content <- ifelse(df$content=="resident_pop_sex_age", "resident_pop_age", df$content)
 
-### Keep also the main regions in year 2000
-regions2000 <- unique(df[df$Year==2000 & df$content==unique(df$content)[1],]$Level_3)
-temp <- filter(df[df$Year==2000,], Level_3 %in% regions2000)
-df <- bind_rows(temp, df[df$Year==2010,], df[df$Year==2015,])
 df$Level_1 <- gsub("Condo miniums","Condominiums", df$Level_1)
+
+### Multiply values in 2010 by 1000 so they reflect actual numbers
+df$Value <- ifelse(df$Year==2015 & !(df$content=="resident_pop_age" |
+                      df$content=="resident_pop_ethnic_sex" | df$content=="resident_pop_dwelling"),
+                   df$Value*1000, df$Value)
 
 df <- df[,c("Year", "survey", "content", "Level_1", "Level_2", "Level_3", "Value")]
 saveRDS(df, "data/SG_region_data_clean.rds")
 
 ### Use to check consistency of Level_1 and Level_2 across years
-group <- unique(df$content)[7]
-df2000 <- df[df$Year==2000 & df$content==group,]
-df2010 <- df[df$Year==2010 & df$content==group,]
-df2015 <- df[df$Year==2015 & df$content==group,]
-
-unique(df[df$content==group,]$Level_1)
-unique(df[df$content==group,]$Level_2)
-unique(df[df$content==group,]$Level_3)
-
-unique(df2000$Level_1)
-unique(df2000$Level_2)
-unique(df2010$Level_1)
-unique(df2010$Level_2)
-unique(df2015$Level_1)
-unique(df2015$Level_2)
+# group <- unique(df$content)[7]
+# df2000 <- df[df$Year==2000 & df$content==group,]
+# df2010 <- df[df$Year==2010 & df$content==group,]
+# df2015 <- df[df$Year==2015 & df$content==group,]
+# 
+# unique(df[df$content==group,]$Level_1)
+# unique(df[df$content==group,]$Level_2)
+# unique(df[df$content==group,]$Level_3)
+# 
+# unique(df2000$Level_1)
+# unique(df2000$Level_2)
+# unique(df2010$Level_1)
+# unique(df2010$Level_2)
+# unique(df2015$Level_1)
+# unique(df2015$Level_2)

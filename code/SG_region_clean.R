@@ -4,7 +4,7 @@ df <- readRDS("data/SG_region_data.rds")
 
 ### Remove subregions for year 2000
 df <- df[(df$Year==2000 & stringr::str_count(df$Level_3, " ")<10) |
-           df$Year!=2000,]
+          df$Year!=2000 | df$content== "resident_hh_dwelling" ,]
 
 df$Level_3 <- trimws(df$Level_3) 
 df$Level_3 <- gsub("- Total", "", df$Level_3)
